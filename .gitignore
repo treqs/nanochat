@@ -11,3 +11,10 @@ eval_bundle/
 # Local setup
 CLAUDE.md
 wandb/
+<<<<<<< Updated upstream
+=======
+
+.nanochat/
+.roar/
+.cache/
+>>>>>>> Stashed changes
