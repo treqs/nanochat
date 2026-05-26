@@ -1,0 +1,6 @@
+[filters]
+ignore_paths = [
+    ".arrow",
+    ".cache/huggingface/hub/",
+    "wandb/",
+]
