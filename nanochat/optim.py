@@ -10,6 +10,7 @@ Further contributions from @karpathy and @chrisjmccormick.
 import torch
 import torch.distributed as dist
 from torch import Tensor
+from nanochat.common import COMPUTE_DTYPE
 
 # -----------------------------------------------------------------------------
 """
@@ -67,6 +68,10 @@ Polar Express Sign Method for orthogonalization.
 https://arxiv.org/pdf/2505.16932
 by Noah Amsel, David Persson, Christopher Musco, Robert M. Gower.
 
+NorMuon variance reduction: per-neuron/column adaptive learning rate that normalizes
+update scales after orthogonalization (Muon's output has non-uniform scales across neurons).
+https://arxiv.org/pdf/2510.05491
+
 Some of the changes in nanochat implementation:
 - Uses a simpler, more general approach to parameter grouping and stacking
 - Uses a single fused kernel for the momentum -> polar_express -> variance_reduction -> update step
@@ -108,8 +113,9 @@ def muon_step_fused(
     g = stacked_grads.lerp_(momentum_buffer, momentum)
 
     # Polar express
-    X = g.bfloat16()
-    X = X / (X.norm(dim=(-2, -1), keepdim=True) * 1.02 + 1e-6)
+    # Cast to bf16 for speed when available; skip cast otherwise (fp16 is unstable here due to limited exponent range)
+    X = g.bfloat16() if COMPUTE_DTYPE == torch.bfloat16 else g
+    X = X / (X.norm(dim=(-2, -1), keepdim=True) * 1.01 + 1e-6)
     if g.size(-2) > g.size(-1): # Tall matrix
         for a, b, c in polar_express_coeffs[:ns_steps]:
             A = X.mT @ X
@@ -373,6 +379,7 @@ class DistMuonAdamW(torch.optim.Optimizer):
                 param_infos[p] = dict(future=future, grad_slice=grad, is_small=True)
             else:
                 # Large params: reduce_scatter
+                assert grad.shape[0] % world_size == 0, f"AdamW reduce_scatter requires shape[0] ({grad.shape[0]}) divisible by world_size ({world_size})"
                 rank_size = grad.shape[0] // world_size
                 grad_slice = torch.empty_like(grad[:rank_size])
                 future = dist.reduce_scatter_tensor(grad_slice, grad, op=dist.ReduceOp.AVG, async_op=True).get_future()
